@@ -32,3 +32,14 @@ test_th.*
 .vscode/
 .idea/
 push_to_github.bat
+
+# Archivos del juego y datos locales: nunca al repo
+CUSA*/
+*.pkg
+eboot.bin
+sce_sys/
+sce_module/
+dvdroot_ps4/
+/mods/
+# Capturas de rendimiento (PresentMon)
+*.csv
