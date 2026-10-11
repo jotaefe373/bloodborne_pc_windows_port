@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 
+from launcher_i18n import UI_LANGUAGES, install_ui_language, system_ui_language
+
 APP_DIR = Path(__file__).resolve().parent
 RUN_BAT = APP_DIR / "run.bat"
 LOG_FILE = APP_DIR / "launcher.log"
@@ -175,6 +177,11 @@ class BloodborneLauncher(tk.Tk):
         self.hidden_count = 0
         self.log_queue = queue.Queue()
         self.settings = self.load_settings()
+        self.ui_language = self.settings.get("ui_language") or system_ui_language()
+        install_ui_language(self.ui_language, globals())
+        self.title(self.title())  # translates the title set before the language was known
+        if self.ui_language == "es":
+            self.geometry("860x880")  # Spanish labels are longer
         self.all_xml_patches = load_xml_patches()
         self.enabled_patches = set(self.settings.get("enabled_patches", ["Skip Intro"]))
 
@@ -448,6 +455,14 @@ class BloodborneLauncher(tk.Tk):
         ttk.Button(bar, text="Clear", style="Secondary.TButton", command=self.clear_log).pack(side="left")
         ttk.Button(bar, text="Open launcher.log", style="Secondary.TButton",
                    command=self.open_log_file).pack(side="left", padx=6)
+        ui_names = [n for n, _ in UI_LANGUAGES]
+        self.ui_language_var = tk.StringVar(
+            value=next((n for n, c in UI_LANGUAGES if c == self.ui_language), ui_names[0]))
+        ui_combo = ttk.Combobox(bar, textvariable=self.ui_language_var, values=ui_names,
+                                state="readonly", width=9)
+        ui_combo.pack(side="right")
+        ui_combo.bind("<<ComboboxSelected>>", lambda e: self.on_ui_language())
+        ttk.Label(bar, text="Launcher Language:").pack(side="right", padx=(0, 6))
 
         # log text + scrollbar
         log_frame = ttk.Frame(main)
@@ -458,6 +473,10 @@ class BloodborneLauncher(tk.Tk):
         self.log_text.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.log_text.pack(side="left", fill="both", expand=True)
+
+    def on_ui_language(self):
+        self.save_settings()
+        messagebox.showinfo("Launcher Language", "Restart the launcher to change its language.")
 
     def open_backups(self):
         SAVE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -941,6 +960,7 @@ class BloodborneLauncher(tk.Tk):
             "aniso": self.aniso_var.get(),
             "language": self.language_var.get(),
             "present_mode": self.present_var.get(),
+            "ui_language": dict(UI_LANGUAGES).get(self.ui_language_var.get(), "en"),
             "backup_saves": self.backup_saves.get(),
             "mods": self.feat_mods.get(),
             "hide_vk": self.hide_vk_var.get(),
