@@ -40,6 +40,12 @@ LANGUAGE_CHOICES = [
     ("Polski", "16"), ("Türkçe", "19"), ("Dansk", "14"), ("Suomi", "12"), ("Norsk", "15"),
     ("Svenska", "13"), ("日本語", "0"), ("한국어", "9"), ("简体中文", "11"), ("繁體中文", "10"),
 ]
+# Vulkan present mode (BB_PRESENT_MODE): label, value, description.
+PRESENT_CHOICES = [
+    ("Mailbox", "Mailbox", "Newest frame replaces a queued one; no tearing (default)"),
+    ("FIFO (V-Sync)", "Fifo", "Frames wait for the display refresh; no tearing, more latency"),
+    ("Immediate", "Immediate", "Frames are shown at once; lowest latency, may tear"),
+]
 MAX_LOG_LINES = 5000
 VK_NOISE = "<Warning> vk_instance.cpp"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -305,6 +311,20 @@ class BloodborneLauncher(tk.Tk):
                      state="readonly", width=22).grid(row=3, column=1, columnspan=2, sticky="w",
                                                       pady=3, padx=(6, 20))
 
+        present_names = [c[0] for c in PRESENT_CHOICES]
+        present = self.settings.get("present_mode")
+        self.present_var = tk.StringVar(value=present if present in present_names else present_names[0])
+        self.present_desc_var = tk.StringVar()
+        ttk.Label(opts, text="Present Mode:", style="Card.TLabel").grid(row=4, column=0, sticky="w", pady=3)
+        present_combo = ttk.Combobox(opts, textvariable=self.present_var, values=present_names,
+                                     state="readonly", width=12)
+        present_combo.grid(row=4, column=1, sticky="w", pady=3, padx=(6, 20))
+        present_combo.bind("<<ComboboxSelected>>", lambda e: self.update_present_desc())
+        ttk.Label(opts, textvariable=self.present_desc_var, style="Card.TLabel",
+                  font=("Segoe UI", 8), foreground="#888888").grid(row=4, column=2, columnspan=3,
+                                                                    sticky="w", pady=3)
+        self.update_present_desc()
+
         # Features Card
         feat_card = ttk.Frame(main, style="Card.TFrame", padding=12)
         feat_card.pack(fill="x", pady=(0, 10))
@@ -400,6 +420,10 @@ class BloodborneLauncher(tk.Tk):
         self.log_text.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.log_text.pack(side="left", fill="both", expand=True)
+
+    def update_present_desc(self):
+        desc = next((c[2] for c in PRESENT_CHOICES if c[0] == self.present_var.get()), "")
+        self.present_desc_var.set(f"↳ {desc}" if desc else "")
 
     def update_aniso_desc(self):
         curr = self.aniso_var.get()
@@ -874,6 +898,7 @@ class BloodborneLauncher(tk.Tk):
             "res": self.res_var.get(),
             "aniso": self.aniso_var.get(),
             "language": self.language_var.get(),
+            "present_mode": self.present_var.get(),
             "mods": self.feat_mods.get(),
             "hide_vk": self.hide_vk_var.get(),
             "feat_upscaler": self.feat_upscaler.get(),
@@ -1140,6 +1165,10 @@ class BloodborneLauncher(tk.Tk):
         # Game language (PS4 system language)
         env["BB_LANGUAGE"] = dict(LANGUAGE_CHOICES).get(self.language_var.get(), "1")
 
+        # Vulkan present mode (unsupported modes fall back to FIFO in the swapchain)
+        env["BB_PRESENT_MODE"] = next((c[1] for c in PRESENT_CHOICES if c[0] == self.present_var.get()),
+                                      "Mailbox")
+
         # Overlay menu & HUD stats
         if not self.feat_overlay.get():
             env["BB_OVERLAY"] = "0"
@@ -1206,7 +1235,8 @@ class BloodborneLauncher(tk.Tk):
         self.log(f"Starting Bloodborne from: {game_dir}   [{datetime.now():%Y-%m-%d %H:%M:%S}]")
         self.log(f"FPS: {self.fps_var.get()} | Res: {res_choice} | Mods: {env['BB_MODS_ENABLED']}")
         self.log(features_str)
-        self.log(f"Language: {self.language_var.get()} (BB_LANGUAGE={env['BB_LANGUAGE']})")
+        self.log(f"Language: {self.language_var.get()} (BB_LANGUAGE={env['BB_LANGUAGE']}) | "
+                 f"Present mode: {env['BB_PRESENT_MODE']}")
         self.log(f"XML Patches ({len(active_patches)} active): {', '.join(active_patches) if active_patches else 'None'}")
         self.log("=" * 50)
 
