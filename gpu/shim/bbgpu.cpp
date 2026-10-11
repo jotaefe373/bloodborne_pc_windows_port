@@ -29,6 +29,7 @@
 #include "core/memory.h"
 #include "core/signals.h"
 #include "sdl_window.h"
+#include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 extern "C" {
@@ -48,6 +49,7 @@ void runtime_memory_set_gpu_hooks(RuntimeGpuRange map, RuntimeGpuRange unmap, Ru
 }
 
 Frontend::WindowSDL* g_window = nullptr;
+extern std::unique_ptr<Vulkan::Presenter> presenter; // gnmdriver.cpp
 
 namespace Libraries::GnmDriver { void RegisterLib(Core::Loader::SymbolsResolver* sym); }
 namespace Libraries::AvPlayer { void RegisterLib(Core::Loader::SymbolsResolver* sym); }
@@ -234,6 +236,19 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        // Let the GPU finish the submitted work first: exiting with commands in flight could
+        // leave the process stuck in the driver. A hung GPU still exits after 3 seconds.
+        if (presenter) {
+            static std::atomic<bool> gpu_idle{false};
+            std::thread([] {
+                presenter->WaitGpuIdle();
+                gpu_idle = true;
+            }).detach();
+            for (int ms = 0; ms < 3000 && !gpu_idle; ms += 10) {
+                SDL_Delay(10);
+            }
+            std::printf("Window closed: GPU %s\n", gpu_idle ? "idle" : "still busy after 3 s");
+        }
         std::fflush(stdout);
         std::_Exit(0);
     });

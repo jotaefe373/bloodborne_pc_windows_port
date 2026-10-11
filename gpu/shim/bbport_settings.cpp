@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -15,6 +17,32 @@ namespace {
 const char* Path() {
     const char* env = std::getenv("BB_CONFIG");
     return env && env[0] ? env : "bbport.ini";
+}
+
+// Modification time of the file as last loaded or saved. Reload() skips an unchanged file, so
+// menu changes not yet saved (the menu saves on close) are not overwritten by the old values.
+std::mutex seen_mutex;
+std::filesystem::file_time_type seen_time{};
+
+std::filesystem::file_time_type FileTime() {
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(Path(), ec);
+    return ec ? std::filesystem::file_time_type{} : time;
+}
+
+void MarkSeen() {
+    std::scoped_lock lock{seen_mutex};
+    seen_time = FileTime();
+}
+
+bool ChangedSinceSeen() {
+    std::scoped_lock lock{seen_mutex};
+    const auto time = FileTime();
+    if (time == seen_time) {
+        return false;
+    }
+    seen_time = time;
+    return true;
 }
 
 float Clamp(float v, float lo, float hi) {
@@ -123,6 +151,7 @@ void Load() {
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
     }
+    MarkSeen();
     // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("BB_UPSCALER")) {
         v.upscaler = UpscalerOff;
@@ -156,6 +185,9 @@ void Load() {
 
 void Reload() {
     auto& v = Get();
+    if (!ChangedSinceSeen()) {
+        return;
+    }
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
         while (std::fgets(line, sizeof(line), file)) {
@@ -240,6 +272,7 @@ void Save() {
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
     std::fclose(file);
+    MarkSeen();
 }
 
 float PresetScale(int preset) {

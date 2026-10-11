@@ -69,6 +69,13 @@ public:
         return *rasterizer.get();
     }
 
+    /// bbport: blocks further queue submissions and waits for the GPU to finish its work,
+    /// so closing the window does not end the process with commands still in flight.
+    void WaitGpuIdle() {
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
+        (void)instance.GetDevice().waitIdle();
+    }
+
     bool IsHDRSupported() const {
         return swapchain.HasHDR();
     }
