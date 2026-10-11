@@ -43,3 +43,5 @@ dvdroot_ps4/
 /mods/
 # Capturas de rendimiento (PresentMon)
 *.csv
+# Respaldos de partidas del launcher
+/backups/

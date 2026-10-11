@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Bloodborne PC (Windows) Launcher GUI."""
 
+import hashlib
 import json
 import locale
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import tkinter as tk
@@ -19,6 +21,9 @@ LOG_FILE = APP_DIR / "launcher.log"
 SETTINGS_FILE = APP_DIR / "launcher_settings.json"
 PATCHES_XML = APP_DIR / "patches" / "Bloodborne.xml"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
+USER_DIR = Path(os.environ.get("BB_USER_DIR") or APP_DIR / "user")  # run.bat's default
+SAVE_BACKUP_DIR = APP_DIR / "backups"
+SAVE_BACKUPS_KEPT = 10
 
 FPS_CHOICES = ["uncap", "60", "90", "30"]
 RES_CHOICES = ["1920x1080 (Native)", "1280x720", "2560x1440", "3840x2160"]
@@ -61,6 +66,32 @@ def read_ini_value(key: str, ini_path: Path = APP_DIR / "bbport.ini"):
     except OSError:
         pass
     return None
+
+
+def backup_saves(user_dir: Path = USER_DIR, backup_dir: Path = SAVE_BACKUP_DIR,
+                 keep: int = SAVE_BACKUPS_KEPT) -> str:
+    """Copies user_dir/savedata to backup_dir/savedata_<date-time>, unless the newest copy already
+    matches it, and keeps the newest `keep` copies. Returns a line for the log."""
+    source = user_dir / "savedata"
+    files = sorted(p for p in source.rglob("*") if p.is_file()) if source.is_dir() else []
+    if not files:
+        return "no saves yet"
+    # Names, sizes and modification times: a changed save changes at least one of them.
+    listing = "\n".join(f"{p.relative_to(source).as_posix()}|{p.stat().st_size}|{p.stat().st_mtime_ns}"
+                        for p in files)
+    fingerprint = hashlib.sha256(listing.encode()).hexdigest()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(p for p in backup_dir.glob("savedata_*") if p.is_dir())
+    newest_mark = existing[-1] / ".fingerprint" if existing else None
+    if newest_mark and newest_mark.is_file() and newest_mark.read_text() == fingerprint:
+        return f"unchanged since {existing[-1].name}"
+    target = backup_dir / f"savedata_{datetime.now():%Y-%m-%d_%H-%M-%S}"
+    shutil.copytree(source, target)
+    (target / ".fingerprint").write_text(fingerprint)
+    existing.append(target)
+    for old in existing[:-keep]:
+        shutil.rmtree(old, ignore_errors=True)
+    return f"copied to {target} ({len(files)} files, keeping the last {keep})"
 
 
 def load_xml_patches(xml_path: Path = PATCHES_XML):
@@ -350,6 +381,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_fps_patch = tk.BooleanVar(value=self.settings.get("feat_fps_patch", True))
         self.feat_mods = tk.BooleanVar(value=self.settings.get("mods", True))
         self.feat_res_scaling = tk.BooleanVar(value=self.settings.get("feat_res_scaling", True))
+        self.backup_saves = tk.BooleanVar(value=self.settings.get("backup_saves", True))
 
         grid_f = ttk.Frame(feat_card, style="Card.TFrame")
         grid_f.pack(fill="x")
@@ -372,6 +404,12 @@ class BloodborneLauncher(tk.Tk):
         cb_res = ttk.Checkbutton(grid_f, text="Resolution scaling", variable=self.feat_res_scaling,
                                  style="Card.TCheckbutton", command=self.update_res_scaling_state)
         cb_res.grid(row=1, column=1, sticky="w", pady=2, padx=(0, 15))
+        backup_box = ttk.Frame(grid_f, style="Card.TFrame")
+        backup_box.grid(row=1, column=2, sticky="w", pady=2)
+        ttk.Checkbutton(backup_box, text="Back up saves on launch", variable=self.backup_saves,
+                        style="Card.TCheckbutton").pack(side="left")
+        ttk.Button(backup_box, text="Open", style="Secondary.TButton",
+                   command=self.open_backups).pack(side="left", padx=(8, 0))
 
         # Row 2 (Popular XML Patches)
         ttk.Checkbutton(grid_f, text="Skip Intro & Logos", variable=self.feat_skip_intro,
@@ -420,6 +458,10 @@ class BloodborneLauncher(tk.Tk):
         self.log_text.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.log_text.pack(side="left", fill="both", expand=True)
+
+    def open_backups(self):
+        SAVE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        os.startfile(SAVE_BACKUP_DIR)
 
     def update_present_desc(self):
         desc = next((c[2] for c in PRESENT_CHOICES if c[0] == self.present_var.get()), "")
@@ -899,6 +941,7 @@ class BloodborneLauncher(tk.Tk):
             "aniso": self.aniso_var.get(),
             "language": self.language_var.get(),
             "present_mode": self.present_var.get(),
+            "backup_saves": self.backup_saves.get(),
             "mods": self.feat_mods.get(),
             "hide_vk": self.hide_vk_var.get(),
             "feat_upscaler": self.feat_upscaler.get(),
@@ -1147,6 +1190,12 @@ class BloodborneLauncher(tk.Tk):
         self.log("[PRE-LAUNCH] Pre-flight verification passed:")
         for line in details:
             self.log(f"  {line}")
+
+        if self.backup_saves.get():
+            try:
+                self.log(f"[BACKUP] Saves: {backup_saves()}")
+            except OSError as e:
+                self.log(f"[BACKUP] Could not back up saves: {e}")
 
         env = os.environ.copy()
         env["BB_GAME_DIR"] = str(game_dir)
