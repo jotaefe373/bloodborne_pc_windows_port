@@ -30,9 +30,31 @@ ANISO_CHOICES = [
     ("2x", "2", "2x anisotropic filtering"),
     ("Off", "0", "Game's default anisotropic filtering (no override)"),
 ]
+# Game language (BB_LANGUAGE): the PS4 system language codes whose text the game ships
+# (dvdroot_ps4/msg). Voices stay in English.
+LANGUAGE_CHOICES = [
+    ("English (US)", "1"), ("English (UK)", "18"),
+    ("Español (España)", "3"), ("Español (Latinoamérica)", "20"),
+    ("Français", "2"), ("Deutsch", "4"), ("Italiano", "5"), ("Nederlands", "6"),
+    ("Português (Portugal)", "7"), ("Português (Brasil)", "17"), ("Русский", "8"),
+    ("Polski", "16"), ("Türkçe", "19"), ("Dansk", "14"), ("Suomi", "12"), ("Norsk", "15"),
+    ("Svenska", "13"), ("日本語", "0"), ("한국어", "9"), ("简体中文", "11"), ("繁體中文", "10"),
+]
 MAX_LOG_LINES = 5000
 VK_NOISE = "<Warning> vk_instance.cpp"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def read_ini_value(key: str, ini_path: Path = APP_DIR / "bbport.ini"):
+    """The value of key in bbport.ini (the in-game menu's settings), or None."""
+    try:
+        for line in ini_path.read_text(encoding="utf-8").splitlines():
+            name, sep, value = line.partition("=")
+            if sep and name.strip() == key:
+                return value.strip()
+    except OSError:
+        pass
+    return None
 
 
 def load_xml_patches(xml_path: Path = PATCHES_XML):
@@ -271,6 +293,17 @@ class BloodborneLauncher(tk.Tk):
                                         foreground="#888888")
         self.aniso_desc_lbl.grid(row=2, column=2, columnspan=2, sticky="w", pady=3)
         self.update_aniso_desc()
+
+        language_names = [c[0] for c in LANGUAGE_CHOICES]
+        language = self.settings.get("language")
+        if language not in language_names:
+            code = os.environ.get("BB_LANGUAGE", "1")
+            language = next((n for n, c in LANGUAGE_CHOICES if c == code), language_names[0])
+        self.language_var = tk.StringVar(value=language)
+        ttk.Label(opts, text="Game Language:", style="Card.TLabel").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Combobox(opts, textvariable=self.language_var, values=language_names,
+                     state="readonly", width=22).grid(row=3, column=1, columnspan=2, sticky="w",
+                                                      pady=3, padx=(6, 20))
 
         # Features Card
         feat_card = ttk.Frame(main, style="Card.TFrame", padding=12)
@@ -840,6 +873,7 @@ class BloodborneLauncher(tk.Tk):
             "fps": self.fps_var.get(),
             "res": self.res_var.get(),
             "aniso": self.aniso_var.get(),
+            "language": self.language_var.get(),
             "mods": self.feat_mods.get(),
             "hide_vk": self.hide_vk_var.get(),
             "feat_upscaler": self.feat_upscaler.get(),
@@ -1094,11 +1128,17 @@ class BloodborneLauncher(tk.Tk):
         env["BB_FPS"] = self.fps_var.get()
         env["BB_MODS_ENABLED"] = "1" if self.feat_mods.get() else "0"
 
-        # Upscaler (FSR)
+        # Upscaler (FSR). Without BB_UPSCALER the game takes bbport.ini's choice, and off when
+        # the file has none: so checked means FSR 3.1 unless the in-game menu chose a mode.
         if not self.feat_upscaler.get():
             env["BB_UPSCALER"] = "off"
+        elif read_ini_value("upscaler") in (None, "off"):
+            env["BB_UPSCALER"] = "fsr3"
         else:
             env.pop("BB_UPSCALER", None)
+
+        # Game language (PS4 system language)
+        env["BB_LANGUAGE"] = dict(LANGUAGE_CHOICES).get(self.language_var.get(), "1")
 
         # Overlay menu & HUD stats
         if not self.feat_overlay.get():
@@ -1166,6 +1206,7 @@ class BloodborneLauncher(tk.Tk):
         self.log(f"Starting Bloodborne from: {game_dir}   [{datetime.now():%Y-%m-%d %H:%M:%S}]")
         self.log(f"FPS: {self.fps_var.get()} | Res: {res_choice} | Mods: {env['BB_MODS_ENABLED']}")
         self.log(features_str)
+        self.log(f"Language: {self.language_var.get()} (BB_LANGUAGE={env['BB_LANGUAGE']})")
         self.log(f"XML Patches ({len(active_patches)} active): {', '.join(active_patches) if active_patches else 'None'}")
         self.log("=" * 50)
 

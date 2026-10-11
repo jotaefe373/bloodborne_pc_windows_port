@@ -60,7 +60,7 @@ _Static_assert(__builtin_offsetof(PadData,timestamp)==80,"OrbisPadData timestamp
 _Static_assert(sizeof(ControllerInfo)==28,"OrbisPadControllerInformation layout");
 
 static HostMutex lock = HOST_MUTEX_INIT;
-static int initialized, opened, sdl_ready;
+static int initialized, opened, sdl_ready, watcher_started;
 static SDL_Gamepad *gamepad;
 static size_t reads;
 static uint8_t connected_count;
@@ -77,21 +77,38 @@ static void touch_click(PadData *d, int right) {
     d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
 }
 
-/* Opens the first gamepad SDL knows about; called under lock. */
-static SDL_Gamepad *current_gamepad(void) {
-    if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
+/* The gamepad the watcher thread has open, or NULL; called under lock. */
+static SDL_Gamepad *current_gamepad(void) { return gamepad; }
+
+/* Opens the first gamepad SDL knows about and closes it when it disconnects. Opening a
+ * DualShock 4 can take tens of milliseconds; doing it here instead of in pad reads keeps a
+ * loose cable's reconnects from stalling the game's input thread. */
+static void *gamepad_watcher(void *arg) {
+    (void)arg;
+    sdl_ready=SDL_WasInit(SDL_INIT_GAMEPAD) || SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
     if (sdl_ready<0) return NULL;
-    if (gamepad && !SDL_GamepadConnected(gamepad)) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
-    if (!gamepad) {
-        int count=0;
-        SDL_JoystickID *ids=SDL_GetGamepads(&count);
-        if (ids && count>0) {
-            gamepad=SDL_OpenGamepad(ids[0]);
-            if (gamepad) { ++connected_count; printf("Runtime: gamepad connected: %s\n",SDL_GetGamepadName(gamepad)); }
+    for (;;) {
+        host_lock(&lock);
+        SDL_Gamepad *lost=gamepad && !SDL_GamepadConnected(gamepad) ? gamepad : NULL;
+        if (lost) gamepad=NULL;
+        const int missing=gamepad==NULL;
+        host_unlock(&lock);
+        if (lost) SDL_CloseGamepad(lost); /* reads no longer see it */
+        if (missing) {
+            int count=0;
+            SDL_JoystickID *ids=SDL_GetGamepads(&count);
+            SDL_Gamepad *pad=ids && count>0 ? SDL_OpenGamepad(ids[0]) : NULL;
+            SDL_free(ids);
+            if (pad) {
+                host_lock(&lock);
+                gamepad=pad; ++connected_count;
+                host_unlock(&lock);
+                printf("Runtime: gamepad connected: %s\n",SDL_GetGamepadName(pad));
+            }
         }
-        SDL_free(ids);
+        SDL_Delay(250);
     }
-    return gamepad;
+    return NULL;
 }
 static void sample_host(PadData *d) {
     memset(d,0,sizeof(*d));
@@ -447,7 +464,12 @@ static ABI int32_t pad_open(int32_t user, int32_t type, int32_t index, const voi
     if (index) return ERR_INVALID_ARG;
     host_lock(&lock);
     int already=opened; opened=1;
+    const int start_watcher=!watcher_started; watcher_started=1;
     host_unlock(&lock);
+    if (start_watcher) {
+        HostThread thread;
+        if (host_thread_start(&thread,0,gamepad_watcher,NULL)==0) host_thread_detach(thread);
+    }
     if (already) return ERR_ALREADY_OPENED;
     puts("Runtime: pad opened for user 1 (SDL gamepad or keyboard)");
     return PAD_HANDLE;
