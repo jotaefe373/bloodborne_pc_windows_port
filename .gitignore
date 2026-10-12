@@ -45,3 +45,5 @@ dvdroot_ps4/
 *.csv
 # Respaldos de partidas del launcher
 /backups/
+# Logs archivados del launcher
+/logs/

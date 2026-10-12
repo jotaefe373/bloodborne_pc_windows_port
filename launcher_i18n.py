@@ -206,6 +206,8 @@ ES_PATTERNS = [(re.compile(p), t) for p, t in [
     (r"copied to (.+) \((\d+) files, keeping the last (\d+)\)",
      "copiadas a {0} ({1} archivos; se conservan las últimas {2})"),
     (r"Starting Bloodborne from: (.*)", "Iniciando Bloodborne desde: {0}"),
+    (r"\[LOG\] Could not archive the previous launcher\.log: (.*)",
+     "[LOG] No se pudo archivar el launcher.log anterior: {0}"),
     (r"XML Patches \((\d+) active\): (.*)", "Parches XML ({0} activos): {1}"),
     (r"Launch Error: (.*)", "Error al lanzar: {0}"),
     (r"\((\d+) Vulkan warning lines hidden; full output is in launcher\.log\)",

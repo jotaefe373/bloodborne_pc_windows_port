@@ -77,6 +77,19 @@ static void touch_click(PadData *d, int right) {
     d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
 }
 
+/* Wall-clock time and flush: a crash log can then be matched with (dis)connections. */
+static void log_pad_event(const char *what, const char *name) {
+    const time_t now=time(NULL);
+    struct tm t;
+#ifdef _WIN32
+    localtime_s(&t,&now);
+#else
+    localtime_r(&now,&t);
+#endif
+    printf("Runtime: gamepad %s%s [%02d:%02d:%02d]\n",what,name ? name : "",t.tm_hour,t.tm_min,t.tm_sec);
+    fflush(stdout);
+}
+
 /* The gamepad the watcher thread has open, or NULL; called under lock. */
 static SDL_Gamepad *current_gamepad(void) { return gamepad; }
 
@@ -93,7 +106,10 @@ static void *gamepad_watcher(void *arg) {
         if (lost) gamepad=NULL;
         const int missing=gamepad==NULL;
         host_unlock(&lock);
-        if (lost) SDL_CloseGamepad(lost); /* reads no longer see it */
+        if (lost) {
+            SDL_CloseGamepad(lost); /* reads no longer see it */
+            log_pad_event("disconnected","");
+        }
         if (missing) {
             int count=0;
             SDL_JoystickID *ids=SDL_GetGamepads(&count);
@@ -103,7 +119,7 @@ static void *gamepad_watcher(void *arg) {
                 host_lock(&lock);
                 gamepad=pad; ++connected_count;
                 host_unlock(&lock);
-                printf("Runtime: gamepad connected: %s\n",SDL_GetGamepadName(pad));
+                log_pad_event("connected: ",SDL_GetGamepadName(pad));
             }
         }
         SDL_Delay(250);

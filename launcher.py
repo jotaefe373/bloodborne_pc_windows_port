@@ -26,6 +26,8 @@ DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
 USER_DIR = Path(os.environ.get("BB_USER_DIR") or APP_DIR / "user")  # run.bat's default
 SAVE_BACKUP_DIR = APP_DIR / "backups"
 SAVE_BACKUPS_KEPT = 10
+LOG_ARCHIVE_DIR = APP_DIR / "logs"
+LOGS_KEPT = 20
 
 FPS_CHOICES = ["uncap", "60", "90", "30"]
 RES_CHOICES = ["1920x1080 (Native)", "1280x720", "2560x1440", "3840x2160"]
@@ -94,6 +96,18 @@ def backup_saves(user_dir: Path = USER_DIR, backup_dir: Path = SAVE_BACKUP_DIR,
     for old in existing[:-keep]:
         shutil.rmtree(old, ignore_errors=True)
     return f"copied to {target} ({len(files)} files, keeping the last {keep})"
+
+
+def archive_log(log_file: Path = LOG_FILE, archive_dir: Path = LOG_ARCHIVE_DIR, keep: int = LOGS_KEPT):
+    """Moves the previous session's launcher.log to archive_dir/launcher_<date-time>.log (its last
+    write) before a launch overwrites it, keeping the newest `keep` logs."""
+    if not log_file.is_file() or log_file.stat().st_size == 0:
+        return
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.fromtimestamp(log_file.stat().st_mtime).strftime("%Y-%m-%d_%H-%M-%S")
+    shutil.move(str(log_file), str(archive_dir / f"launcher_{stamp}.log"))
+    for old in sorted(archive_dir.glob("launcher_*.log"))[:-keep]:
+        old.unlink(missing_ok=True)
 
 
 def load_xml_patches(xml_path: Path = PATCHES_XML):
@@ -1284,6 +1298,10 @@ class BloodborneLauncher(tk.Tk):
         else:
             env.pop("BB_PATCHES", None)
 
+        try:
+            archive_log()
+        except OSError as e:
+            self.log(f"[LOG] Could not archive the previous launcher.log: {e}")
         try:
             self.log_fh = open(LOG_FILE, "w", encoding="utf-8")
         except OSError:
